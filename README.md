@@ -95,6 +95,26 @@ Esse comando faz:
 4. Lista os arquivos salvos no servidor via `FileService.ListFiles`.
 5. Baixa o arquivo de volta para `client-python/downloads/` via `FileService.DownloadFile`.
 
+## Como funciona a transferencia de arquivos
+
+A transferencia foi implementada no servico gRPC `FileService`, definido em
+`proto/battle.proto`. O cliente Python e o backend consumidor; ele abre o
+arquivo local, divide o conteudo em blocos de 64 KB e envia esses blocos pelo
+RPC `UploadFile(stream FileChunk)`. Cada `FileChunk` carrega o nome do arquivo
+e os bytes daquele pedaco.
+
+O servidor Node.js recebe o stream, valida se o nome do arquivo e seguro,
+limita o tamanho da demonstracao a 5 MB e salva o resultado em
+`server-node/storage/`. Para consultar o que esta salvo, o cliente chama
+`ListFiles`, que retorna nome e tamanho de cada arquivo. Para baixar, o cliente
+chama `DownloadFile(FileRequest)`; o servidor le o arquivo salvo em blocos e
+devolve outro stream de `FileChunk`, que o Python grava em
+`client-python/downloads/`.
+
+Esse fluxo atende ao foco Backend-Backend do PDF: a troca acontece entre dois
+processos de backend, em linguagens diferentes, usando o contrato `.proto`
+compartilhado.
+
 Para demonstrar somente a transferencia de arquivos:
 
 ```powershell

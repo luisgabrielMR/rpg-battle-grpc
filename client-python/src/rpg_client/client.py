@@ -29,6 +29,31 @@ PLAYER_NAME = "Guerreiro"
 SAMPLE_FILE = PROJECT_ROOT / "client-python" / "sample-files" / "ficha_heroi.txt"
 DOWNLOAD_DIR = PROJECT_ROOT / "client-python" / "downloads"
 CHUNK_SIZE = 64 * 1024
+INVALID_FILE_NAME_CHARS = set('<>:"/\\|?*')
+RESERVED_WINDOWS_FILE_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+}
 
 
 def ensure_generated_proto(console: Console | None = None) -> None:
@@ -173,13 +198,36 @@ def call_status(stub: Any, battle_pb2: Any) -> Any:
     return stub.GetStatus(battle_pb2.StatusRequest(), timeout=5)
 
 
+def safe_remote_file_name(file_name: str) -> str:
+    value = str(file_name or "").strip()
+    base_name = value.split(".", 1)[0].upper()
+    has_invalid_char = any(ord(char) < 32 or char in INVALID_FILE_NAME_CHARS for char in value)
+
+    if (
+        not value
+        or value in {".", ".."}
+        or len(value) > 255
+        or has_invalid_char
+        or base_name in RESERVED_WINDOWS_FILE_NAMES
+        or Path(value).name != value
+    ):
+        raise ValueError("Nome de arquivo remoto invalido.")
+    return value
+
+
 def file_chunks(battle_pb2: Any, file_path: Path) -> Any:
+    sent_any_chunk = False
+
     with file_path.open("rb") as file:
         while True:
             content = file.read(CHUNK_SIZE)
             if not content:
                 break
+            sent_any_chunk = True
             yield battle_pb2.FileChunk(file_name=file_path.name, content=content)
+
+    if not sent_any_chunk:
+        yield battle_pb2.FileChunk(file_name=file_path.name, content=b"")
 
 
 def upload_file(file_stub: Any, battle_pb2: Any, file_path: Path) -> Any:
@@ -195,13 +243,23 @@ def list_files(file_stub: Any, battle_pb2: Any) -> Any:
 
 
 def download_file(file_stub: Any, battle_pb2: Any, file_name: str, output_dir: Path) -> Path:
+    remote_name = safe_remote_file_name(file_name)
     target_dir = output_dir.expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / Path(file_name).name
+    target_path = target_dir / remote_name
+    partial_path = target_dir / f".{remote_name}.part"
 
-    with target_path.open("wb") as file:
-        for chunk in file_stub.DownloadFile(battle_pb2.FileRequest(file_name=file_name), timeout=15):
-            file.write(chunk.content)
+    try:
+        with partial_path.open("wb") as file:
+            for chunk in file_stub.DownloadFile(battle_pb2.FileRequest(file_name=remote_name), timeout=15):
+                if chunk.file_name and safe_remote_file_name(chunk.file_name) != remote_name:
+                    raise ValueError("Servidor enviou chunks de outro arquivo.")
+                file.write(chunk.content)
+        partial_path.replace(target_path)
+    except (grpc.RpcError, OSError, ValueError):
+        if partial_path.exists():
+            partial_path.unlink()
+        raise
 
     return target_path
 
@@ -333,6 +391,8 @@ def main() -> None:
         console.print(f"[bold red]Nao consegui conectar em {args.target}.[/bold red]")
         console.print("Inicie o servidor com: npm --prefix server-node start")
     except FileNotFoundError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+    except ValueError as exc:
         console.print(f"[bold red]{exc}[/bold red]")
     except grpc.RpcError as exc:
         console.print(f"[bold red]Erro gRPC: {exc.details() or exc.code().name}[/bold red]")

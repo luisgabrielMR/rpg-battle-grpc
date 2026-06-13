@@ -13,6 +13,31 @@ const ADDRESS = `${HOST}:${PORT}`;
 const STORAGE_DIR = path.resolve(__dirname, '../storage');
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const FILE_CHUNK_SIZE = 64 * 1024;
+const INVALID_FILE_NAME_PATTERN = /[<>:"|?*\x00-\x1F]/;
+const RESERVED_WINDOWS_FILE_NAMES = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'COM1',
+  'COM2',
+  'COM3',
+  'COM4',
+  'COM5',
+  'COM6',
+  'COM7',
+  'COM8',
+  'COM9',
+  'LPT1',
+  'LPT2',
+  'LPT3',
+  'LPT4',
+  'LPT5',
+  'LPT6',
+  'LPT7',
+  'LPT8',
+  'LPT9',
+]);
 
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   keepCase: true,
@@ -32,11 +57,17 @@ function ensureStorageDir() {
 
 function safeFileName(fileName) {
   const value = String(fileName || '').trim();
-  if (!value || value === '.' || value === '..') {
+  const baseName = value.split('.', 1)[0].toUpperCase();
+
+  if (!value || value === '.' || value === '..' || value.length > 255) {
     return null;
   }
 
   if (value.includes('/') || value.includes('\\') || path.basename(value) !== value) {
+    return null;
+  }
+
+  if (INVALID_FILE_NAME_PATTERN.test(value) || RESERVED_WINDOWS_FILE_NAMES.has(baseName)) {
     return null;
   }
 
