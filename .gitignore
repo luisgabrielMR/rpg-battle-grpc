@@ -3,6 +3,8 @@ node_modules/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+client-python/downloads/
+server-node/storage/
 
 client-python/src/rpg_client/generated/battle_pb2.py
 client-python/src/rpg_client/generated/battle_pb2.pyi
