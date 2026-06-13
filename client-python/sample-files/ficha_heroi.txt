@@ -1,0 +1,5 @@
+Ficha do heroi para demo gRPC
+
+Nome: Guerreiro
+Classe: Defensor do contrato .proto
+Missao: provar upload, listagem e download de arquivos via gRPC.

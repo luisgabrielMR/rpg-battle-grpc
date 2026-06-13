@@ -9,6 +9,12 @@ service BattleService {
   rpc ResetBattle(ResetRequest) returns (ActionResult);
 }
 
+service FileService {
+  rpc UploadFile(stream FileChunk) returns (FileTransferResult);
+  rpc ListFiles(ListFilesRequest) returns (FileList);
+  rpc DownloadFile(FileRequest) returns (stream FileChunk);
+}
+
 message StatusRequest {}
 
 message ResetRequest {}
@@ -44,4 +50,31 @@ message ActionResult {
   bool success = 1;
   string message = 2;
   BattleState state = 3;
+}
+
+message ListFilesRequest {}
+
+message FileRequest {
+  string file_name = 1;
+}
+
+message FileChunk {
+  string file_name = 1;
+  bytes content = 2;
+}
+
+message StoredFile {
+  string file_name = 1;
+  int64 size_bytes = 2;
+}
+
+message FileList {
+  repeated StoredFile files = 1;
+}
+
+message FileTransferResult {
+  bool success = 1;
+  string message = 2;
+  string file_name = 3;
+  int64 size_bytes = 4;
 }

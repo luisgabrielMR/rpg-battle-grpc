@@ -26,6 +26,9 @@ GENERATED_DIR = APP_DIR / "generated"
 
 DEFAULT_TARGET = "localhost:50051"
 PLAYER_NAME = "Guerreiro"
+SAMPLE_FILE = PROJECT_ROOT / "client-python" / "sample-files" / "ficha_heroi.txt"
+DOWNLOAD_DIR = PROJECT_ROOT / "client-python" / "downloads"
+CHUNK_SIZE = 64 * 1024
 
 
 def ensure_generated_proto(console: Console | None = None) -> None:
@@ -170,13 +173,74 @@ def call_status(stub: Any, battle_pb2: Any) -> Any:
     return stub.GetStatus(battle_pb2.StatusRequest(), timeout=5)
 
 
-def run_demo(stub: Any, battle_pb2: Any, console: Console) -> None:
-    reset_result = stub.ResetBattle(battle_pb2.ResetRequest(), timeout=5)
-    attack_result = stub.Attack(battle_pb2.ActionRequest(actor_name=PLAYER_NAME), timeout=5)
+def file_chunks(battle_pb2: Any, file_path: Path) -> Any:
+    with file_path.open("rb") as file:
+        while True:
+            content = file.read(CHUNK_SIZE)
+            if not content:
+                break
+            yield battle_pb2.FileChunk(file_name=file_path.name, content=content)
+
+
+def upload_file(file_stub: Any, battle_pb2: Any, file_path: Path) -> Any:
+    source = file_path.expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Arquivo local nao encontrado: {source}")
+
+    return file_stub.UploadFile(file_chunks(battle_pb2, source), timeout=15)
+
+
+def list_files(file_stub: Any, battle_pb2: Any) -> Any:
+    return file_stub.ListFiles(battle_pb2.ListFilesRequest(), timeout=5)
+
+
+def download_file(file_stub: Any, battle_pb2: Any, file_name: str, output_dir: Path) -> Path:
+    target_dir = output_dir.expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / Path(file_name).name
+
+    with target_path.open("wb") as file:
+        for chunk in file_stub.DownloadFile(battle_pb2.FileRequest(file_name=file_name), timeout=15):
+            file.write(chunk.content)
+
+    return target_path
+
+
+def print_file_list(console: Console, files_response: Any) -> None:
+    table = Table(title="Arquivos no servidor gRPC", box=box.SIMPLE)
+    table.add_column("Nome", style="cyan")
+    table.add_column("Bytes", justify="right")
+
+    for item in files_response.files:
+        table.add_row(item.file_name, str(item.size_bytes))
+
+    if not files_response.files:
+        table.add_row("(nenhum arquivo)", "0")
+
+    console.print(table)
+
+
+def run_file_demo(file_stub: Any, battle_pb2: Any, console: Console) -> None:
+    console.print(Rule("[bold cyan]TRANSFERENCIA DE ARQUIVO VIA gRPC[/bold cyan]"))
+    upload_result = upload_file(file_stub, battle_pb2, SAMPLE_FILE)
+    console.print(f"[green]Upload OK:[/green] {upload_result.message} ({upload_result.size_bytes} bytes)")
+
+    files_response = list_files(file_stub, battle_pb2)
+    print_file_list(console, files_response)
+
+    downloaded = download_file(file_stub, battle_pb2, upload_result.file_name, DOWNLOAD_DIR)
+    console.print(f"[green]Download OK:[/green] arquivo salvo em {downloaded}")
+
+
+def run_demo(battle_stub: Any, file_stub: Any, battle_pb2: Any, console: Console) -> None:
+    reset_result = battle_stub.ResetBattle(battle_pb2.ResetRequest(), timeout=5)
+    attack_result = battle_stub.Attack(battle_pb2.ActionRequest(actor_name=PLAYER_NAME), timeout=5)
 
     state = attack_result.state
     render_screen(console, battle_pb2, state, attack_result.message or reset_result.message)
-    console.print("[bold green]Demo gRPC concluida: ResetBattle e Attack responderam com sucesso.[/bold green]")
+    console.print("[bold green]Demo da batalha concluida: ResetBattle e Attack responderam com sucesso.[/bold green]")
+    run_file_demo(file_stub, battle_pb2, console)
+    console.print("[bold green]Demo gRPC concluida com batalha e transferencia de arquivo.[/bold green]")
 
 
 def run_interactive(stub: Any, battle_pb2: Any, console: Console) -> None:
@@ -214,10 +278,28 @@ def run_interactive(stub: Any, battle_pb2: Any, console: Console) -> None:
             last_message = f"Erro gRPC: {exc.details() or exc.code().name}"
 
 
+def run_file_commands(args: argparse.Namespace, file_stub: Any, battle_pb2: Any, console: Console) -> None:
+    if args.upload:
+        upload_result = upload_file(file_stub, battle_pb2, args.upload)
+        console.print(f"[green]Upload OK:[/green] {upload_result.message} ({upload_result.size_bytes} bytes)")
+
+    if args.list_files:
+        print_file_list(console, list_files(file_stub, battle_pb2))
+
+    if args.download:
+        downloaded = download_file(file_stub, battle_pb2, args.download, args.download_dir)
+        console.print(f"[green]Download OK:[/green] arquivo salvo em {downloaded}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cliente Rich para RPG distribuido via gRPC.")
     parser.add_argument("--target", default=DEFAULT_TARGET, help=f"Endereco do servidor gRPC. Padrao: {DEFAULT_TARGET}")
-    parser.add_argument("--demo", action="store_true", help="Executa uma rodada automatica e sai.")
+    parser.add_argument("--demo", action="store_true", help="Executa batalha e transferencia de arquivo automaticamente.")
+    parser.add_argument("--file-demo", action="store_true", help="Executa apenas upload, listagem e download de arquivo.")
+    parser.add_argument("--upload", type=Path, help="Envia um arquivo local para o servidor gRPC.")
+    parser.add_argument("--list-files", action="store_true", help="Lista arquivos armazenados no servidor gRPC.")
+    parser.add_argument("--download", help="Baixa um arquivo do servidor gRPC pelo nome.")
+    parser.add_argument("--download-dir", type=Path, default=DOWNLOAD_DIR, help=f"Pasta de download. Padrao: {DOWNLOAD_DIR}")
     parser.add_argument("--generate-only", action="store_true", help="Apenas gera os stubs Python a partir do .proto.")
     return parser.parse_args()
 
@@ -236,15 +318,24 @@ def main() -> None:
     try:
         with grpc.insecure_channel(args.target) as channel:
             grpc.channel_ready_future(channel).result(timeout=5)
-            stub = battle_pb2_grpc.BattleServiceStub(channel)
+            battle_stub = battle_pb2_grpc.BattleServiceStub(channel)
+            file_stub = battle_pb2_grpc.FileServiceStub(channel)
 
             if args.demo:
-                run_demo(stub, battle_pb2, console)
+                run_demo(battle_stub, file_stub, battle_pb2, console)
+            elif args.file_demo:
+                run_file_demo(file_stub, battle_pb2, console)
+            elif args.upload or args.list_files or args.download:
+                run_file_commands(args, file_stub, battle_pb2, console)
             else:
-                run_interactive(stub, battle_pb2, console)
+                run_interactive(battle_stub, battle_pb2, console)
     except grpc.FutureTimeoutError:
         console.print(f"[bold red]Nao consegui conectar em {args.target}.[/bold red]")
         console.print("Inicie o servidor com: npm --prefix server-node start")
+    except FileNotFoundError as exc:
+        console.print(f"[bold red]{exc}[/bold red]")
+    except grpc.RpcError as exc:
+        console.print(f"[bold red]Erro gRPC: {exc.details() or exc.code().name}[/bold red]")
 
 
 if __name__ == "__main__":

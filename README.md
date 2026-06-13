@@ -1,32 +1,45 @@
 # Sistema de Batalha RPG Distribuido
 
-Projeto demonstrando uma batalha RPG distribuida com gRPC:
+Projeto academico de Programacao Distribuida usando gRPC para comunicacao
+Backend-Backend. O tema escolhido e uma batalha RPG em que um backend Node.js
+mantem o estado do jogo e um backend consumidor Python chama os metodos remotos.
 
-- Servidor em Node.js, carregando `proto/battle.proto` dinamicamente com `@grpc/proto-loader`.
-- Cliente em Python, gerando stubs gRPC com `grpcio-tools` e exibindo a batalha com Rich.
-- Contrato compartilhado em Protocol Buffers, com metodos `GetStatus`, `Attack`, `UsePotion` e `ResetBattle`.
+O mesmo contrato gRPC tambem possui um servico de arquivos para demonstrar
+upload, listagem e download via streaming.
 
 ## Estrutura
 
 ```text
 .
-├── proto/
-│   └── battle.proto
-├── server-node/
-│   ├── package.json
-│   └── src/
-│       ├── gameState.js
-│       └── server.js
-├── client-python/
-│   ├── requirements.txt
-│   └── src/rpg_client/
-│       ├── client.py
-│       └── generated/
-└── scripts/
-    ├── setup.ps1
-    ├── run_server.ps1
-    └── run_client.ps1
+|-- proto/
+|   `-- battle.proto
+|-- server-node/
+|   |-- package.json
+|   `-- src/
+|       |-- gameState.js
+|       `-- server.js
+|-- client-python/
+|   |-- requirements.txt
+|   |-- sample-files/
+|   |   `-- ficha_heroi.txt
+|   `-- src/rpg_client/
+|       |-- client.py
+|       `-- generated/
+`-- scripts/
+    |-- setup.ps1
+    |-- run_server.ps1
+    `-- run_client.ps1
 ```
+
+## Servicos gRPC
+
+O arquivo `proto/battle.proto` define dois servicos:
+
+- `BattleService`: `GetStatus`, `Attack`, `UsePotion` e `ResetBattle`.
+- `FileService`: `UploadFile`, `ListFiles` e `DownloadFile`.
+
+`UploadFile` recebe um stream de chunks do cliente para o servidor.
+`DownloadFile` devolve um stream de chunks do servidor para o consumidor.
 
 ## Como rodar no Windows
 
@@ -36,22 +49,64 @@ No PowerShell, dentro da pasta do projeto:
 .\scripts\setup.ps1
 ```
 
-Abra um terminal para o servidor:
+Se o Windows bloquear scripts PowerShell por Execution Policy, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
+```
+
+Abra um terminal para o servidor gRPC:
 
 ```powershell
 .\scripts\run_server.ps1
 ```
 
-Abra outro terminal para o cliente:
+Alternativa com bypass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_server.ps1
+```
+
+Abra outro terminal para o backend consumidor Python:
 
 ```powershell
 .\scripts\run_client.ps1
 ```
 
-Para testar uma chamada automatica sem jogar interativamente:
+## Demo automatica
+
+Com o servidor rodando, execute:
 
 ```powershell
 .\scripts\run_client.ps1 --demo
+```
+
+Alternativa com bypass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_client.ps1 --demo
+```
+
+Esse comando faz:
+
+1. Reinicia a batalha.
+2. Executa um ataque via `BattleService`.
+3. Envia `client-python/sample-files/ficha_heroi.txt` via `FileService.UploadFile`.
+4. Lista os arquivos salvos no servidor via `FileService.ListFiles`.
+5. Baixa o arquivo de volta para `client-python/downloads/` via `FileService.DownloadFile`.
+
+Para demonstrar somente a transferencia de arquivos:
+
+```powershell
+.\scripts\run_client.ps1 --file-demo
+```
+
+Comandos individuais:
+
+```powershell
+.\scripts\run_client.ps1 --upload client-python\sample-files\ficha_heroi.txt
+.\scripts\run_client.ps1 --list-files
+.\scripts\run_client.ps1 --download ficha_heroi.txt
 ```
 
 ## Comandos manuais equivalentes
@@ -64,18 +119,24 @@ npm install
 npm start
 ```
 
-Cliente:
+Cliente/consumidor:
 
 ```powershell
 cd ..
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r client-python\requirements.txt
-.\.venv\Scripts\python.exe client-python\src\rpg_client\client.py
+.\.venv\Scripts\python.exe client-python\src\rpg_client\client.py --demo
 ```
 
-## O que esta respeitando o gRPC
+## O que demonstra Programacao Distribuida
 
-- O arquivo `proto/battle.proto` e o contrato unico entre as duas linguagens.
-- O servidor Node.js registra o servico `BattleService` e implementa RPCs unarias.
-- O cliente Python cria um `BattleServiceStub` e chama os metodos remotos como RPCs reais.
-- A porta padrao e `localhost:50051`, usando credenciais inseguras apenas para ambiente local/didatico.
+- O contrato `.proto` e compartilhado entre dois backends em linguagens
+  diferentes.
+- O servidor Node.js registra os servicos gRPC e fica escutando na porta
+  `50051`.
+- O consumidor Python roda em outro processo, cria stubs gRPC e chama os
+  metodos remotos.
+- A transferencia de arquivos acontece por mensagens gRPC com `bytes`, usando
+  streaming para dividir o arquivo em chunks.
+- Erros basicos sao tratados: servidor indisponivel, arquivo local inexistente,
+  nome de arquivo invalido e arquivo remoto inexistente.
