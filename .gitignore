@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 client-python/downloads/
+client-python/generated-requests/
 server-node/storage/
 
 client-python/src/rpg_client/generated/battle_pb2.py

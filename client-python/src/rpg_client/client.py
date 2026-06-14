@@ -28,6 +28,7 @@ DEFAULT_TARGET = "localhost:50051"
 PLAYER_NAME = "Guerreiro"
 SAMPLE_FILE = PROJECT_ROOT / "client-python" / "sample-files" / "ficha_heroi.txt"
 DOWNLOAD_DIR = PROJECT_ROOT / "client-python" / "downloads"
+REQUEST_DIR = PROJECT_ROOT / "client-python" / "generated-requests"
 CHUNK_SIZE = 64 * 1024
 INVALID_FILE_NAME_CHARS = set('<>:"/\\|?*')
 RESERVED_WINDOWS_FILE_NAMES = {
@@ -290,6 +291,51 @@ def run_file_demo(file_stub: Any, battle_pb2: Any, console: Console) -> None:
     console.print(f"[green]Download OK:[/green] arquivo salvo em {downloaded}")
 
 
+def write_action_request_file(action: str, actor: str, output_dir: Path) -> Path:
+    target_dir = output_dir.expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / "acao_batalha.txt"
+    target_path.write_text(
+        "\n".join(
+            [
+                "tipo=requisicao_batalha",
+                f"acao={action}",
+                f"ator={actor}",
+                "",
+            ]
+        ),
+        encoding="utf8",
+    )
+    return target_path
+
+
+def result_file_name_for(request_file: Path) -> str:
+    return f"resultado_{request_file.stem}{request_file.suffix or '.txt'}"
+
+
+def run_action_file_demo(
+    file_stub: Any,
+    battle_pb2: Any,
+    console: Console,
+    action: str = "attack",
+    actor: str = PLAYER_NAME,
+) -> None:
+    console.print(Rule("[bold cyan]ACAO DE BATALHA POR ARQUIVO VIA gRPC[/bold cyan]"))
+    request_file = write_action_request_file(action, actor, REQUEST_DIR)
+    console.print(f"[cyan]Arquivo de requisicao gerado:[/cyan] {request_file}")
+
+    upload_result = upload_file(file_stub, battle_pb2, request_file)
+    console.print(f"[green]Upload OK:[/green] {upload_result.message} ({upload_result.size_bytes} bytes)")
+
+    result_name = result_file_name_for(request_file)
+    files_response = list_files(file_stub, battle_pb2)
+    print_file_list(console, files_response)
+
+    downloaded = download_file(file_stub, battle_pb2, result_name, DOWNLOAD_DIR)
+    console.print(f"[green]Resultado baixado:[/green] {downloaded}")
+    console.print(Panel(downloaded.read_text(encoding="utf8"), title=result_name, border_style="green", box=box.ROUNDED))
+
+
 def run_demo(battle_stub: Any, file_stub: Any, battle_pb2: Any, console: Console) -> None:
     reset_result = battle_stub.ResetBattle(battle_pb2.ResetRequest(), timeout=5)
     attack_result = battle_stub.Attack(battle_pb2.ActionRequest(actor_name=PLAYER_NAME), timeout=5)
@@ -298,6 +344,7 @@ def run_demo(battle_stub: Any, file_stub: Any, battle_pb2: Any, console: Console
     render_screen(console, battle_pb2, state, attack_result.message or reset_result.message)
     console.print("[bold green]Demo da batalha concluida: ResetBattle e Attack responderam com sucesso.[/bold green]")
     run_file_demo(file_stub, battle_pb2, console)
+    run_action_file_demo(file_stub, battle_pb2, console)
     console.print("[bold green]Demo gRPC concluida com batalha e transferencia de arquivo.[/bold green]")
 
 
@@ -354,6 +401,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", default=DEFAULT_TARGET, help=f"Endereco do servidor gRPC. Padrao: {DEFAULT_TARGET}")
     parser.add_argument("--demo", action="store_true", help="Executa batalha e transferencia de arquivo automaticamente.")
     parser.add_argument("--file-demo", action="store_true", help="Executa apenas upload, listagem e download de arquivo.")
+    parser.add_argument(
+        "--action-file-demo",
+        action="store_true",
+        help="Gera um arquivo de acao, envia ao servidor e baixa o resultado processado.",
+    )
+    parser.add_argument(
+        "--action",
+        choices=["attack", "use_potion", "reset", "status"],
+        default="attack",
+        help="Acao usada no --action-file-demo. Padrao: attack.",
+    )
+    parser.add_argument("--actor", default=PLAYER_NAME, help=f"Ator usado no arquivo de acao. Padrao: {PLAYER_NAME}")
     parser.add_argument("--upload", type=Path, help="Envia um arquivo local para o servidor gRPC.")
     parser.add_argument("--list-files", action="store_true", help="Lista arquivos armazenados no servidor gRPC.")
     parser.add_argument("--download", help="Baixa um arquivo do servidor gRPC pelo nome.")
@@ -383,6 +442,8 @@ def main() -> None:
                 run_demo(battle_stub, file_stub, battle_pb2, console)
             elif args.file_demo:
                 run_file_demo(file_stub, battle_pb2, console)
+            elif args.action_file_demo:
+                run_action_file_demo(file_stub, battle_pb2, console, args.action, args.actor)
             elif args.upload or args.list_files or args.download:
                 run_file_commands(args, file_stub, battle_pb2, console)
             else:

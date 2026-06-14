@@ -20,6 +20,7 @@ upload, listagem e download via streaming.
 |       `-- server.js
 |-- client-python/
 |   |-- requirements.txt
+|   |-- generated-requests/
 |   |-- sample-files/
 |   |   `-- ficha_heroi.txt
 |   `-- src/rpg_client/
@@ -94,6 +95,10 @@ Esse comando faz:
 3. Envia `client-python/sample-files/ficha_heroi.txt` via `FileService.UploadFile`.
 4. Lista os arquivos salvos no servidor via `FileService.ListFiles`.
 5. Baixa o arquivo de volta para `client-python/downloads/` via `FileService.DownloadFile`.
+6. Gera `client-python/generated-requests/acao_batalha.txt`.
+7. Envia esse arquivo de acao para o servidor.
+8. O servidor executa a acao no backend e gera `resultado_acao_batalha.txt`.
+9. O cliente baixa o resultado processado para `client-python/downloads/`.
 
 ## Como funciona a transferencia de arquivos
 
@@ -114,6 +119,52 @@ devolve outro stream de `FileChunk`, que o Python grava em
 Esse fluxo atende ao foco Backend-Backend do PDF: a troca acontece entre dois
 processos de backend, em linguagens diferentes, usando o contrato `.proto`
 compartilhado.
+
+## Demo com arquivo de acao processado no servidor
+
+Para deixar explicito que o cliente apenas envia uma requisicao e que o
+calculo acontece no servidor, existe o comando:
+
+```powershell
+.\scripts\run_client.ps1 --action-file-demo
+```
+
+Alternativa com bypass:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_client.ps1 --action-file-demo
+```
+
+Esse comando gera o arquivo `client-python/generated-requests/acao_batalha.txt`
+com conteudo parecido com:
+
+```text
+tipo=requisicao_batalha
+acao=attack
+ator=Guerreiro
+```
+
+O Python envia esse arquivo por `UploadFile`. O servidor Node.js reconhece a
+linha `acao=attack`, executa o calculo no `gameState.js` e salva um novo
+arquivo no servidor:
+
+```text
+server-node/storage/resultado_acao_batalha.txt
+```
+
+Depois o Python baixa esse resultado para:
+
+```text
+client-python/downloads/resultado_acao_batalha.txt
+```
+
+Tambem e possivel trocar a acao:
+
+```powershell
+.\scripts\run_client.ps1 --action-file-demo --action use_potion
+.\scripts\run_client.ps1 --action-file-demo --action status
+.\scripts\run_client.ps1 --action-file-demo --action reset
+```
 
 Para demonstrar somente a transferencia de arquivos:
 

@@ -13,6 +13,7 @@ const ADDRESS = `${HOST}:${PORT}`;
 const STORAGE_DIR = path.resolve(__dirname, '../storage');
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const FILE_CHUNK_SIZE = 64 * 1024;
+const ACTION_FILE_PATTERN = /^\s*acao\s*=/im;
 const INVALID_FILE_NAME_PATTERN = /[<>:"|?*\x00-\x1F]/;
 const RESERVED_WINDOWS_FILE_NAMES = new Set([
   'CON',
@@ -72,6 +73,12 @@ function safeFileName(fileName) {
   }
 
   return value;
+}
+
+function resultFileNameFor(fileName) {
+  const extension = path.extname(fileName) || '.txt';
+  const baseName = path.basename(fileName, path.extname(fileName)).slice(0, 200) || 'acao';
+  return safeFileName(`resultado_${baseName}${extension}`);
 }
 
 function handleRpc(fn) {
@@ -171,11 +178,18 @@ function uploadFile(call, callback) {
 
     try {
       ensureStorageDir();
-      fs.writeFileSync(path.join(STORAGE_DIR, fileName), Buffer.concat(chunks));
+      const receivedContent = Buffer.concat(chunks);
+      fs.writeFileSync(path.join(STORAGE_DIR, fileName), receivedContent);
+
+      const processedFile = processActionFile(fileName, receivedContent);
+      const message = processedFile
+        ? `Arquivo ${fileName} recebido. Resultado gerado em ${processedFile.file_name}.`
+        : `Arquivo ${fileName} recebido pelo servidor gRPC.`;
+
       responded = true;
       callback(null, {
         success: true,
-        message: `Arquivo ${fileName} recebido pelo servidor gRPC.`,
+        message,
         file_name: fileName,
         size_bytes: totalBytes,
       });
@@ -187,6 +201,110 @@ function uploadFile(call, callback) {
   call.on('error', (error) => {
     fail(grpc.status.INTERNAL, error.message || 'Falha durante upload gRPC.');
   });
+}
+
+function processActionFile(fileName, content) {
+  if (!fileName.toLowerCase().endsWith('.txt')) {
+    return null;
+  }
+
+  const text = content.toString('utf8');
+  if (!ACTION_FILE_PATTERN.test(text)) {
+    return null;
+  }
+
+  const fields = parseKeyValueText(text);
+  const action = String(fields.acao || '').trim().toLowerCase();
+  const actor = String(fields.ator || 'Guerreiro').trim() || 'Guerreiro';
+  const result = runActionFromFile(action, actor);
+  const output = formatActionResultFile(fileName, action, actor, result);
+  const resultFileName = resultFileNameFor(fileName);
+
+  if (!resultFileName) {
+    return null;
+  }
+
+  fs.writeFileSync(path.join(STORAGE_DIR, resultFileName), output, 'utf8');
+  return {
+    file_name: resultFileName,
+    size_bytes: Buffer.byteLength(output, 'utf8'),
+  };
+}
+
+function parseKeyValueText(text) {
+  return text.split(/\r?\n/).reduce((fields, line) => {
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex === -1) {
+      return fields;
+    }
+
+    const key = line.slice(0, separatorIndex).trim().toLowerCase();
+    const value = line.slice(separatorIndex + 1).trim();
+    if (key) {
+      fields[key] = value;
+    }
+
+    return fields;
+  }, {});
+}
+
+function runActionFromFile(action, actor) {
+  if (action === 'attack') {
+    return game.attack(actor);
+  }
+
+  if (action === 'use_potion' || action === 'potion') {
+    return game.usePotion(actor);
+  }
+
+  if (action === 'reset' || action === 'reset_battle') {
+    return game.resetBattle();
+  }
+
+  if (action === 'status' || action === 'get_status') {
+    return {
+      success: true,
+      message: 'Status consultado a partir de arquivo de requisicao.',
+      state: game.status(),
+    };
+  }
+
+  return {
+    success: false,
+    message: `Acao invalida no arquivo: ${action || '(vazia)'}.`,
+    state: game.status(),
+  };
+}
+
+function formatActionResultFile(requestFileName, action, actor, result) {
+  const state = result.state;
+  const lines = [
+    'Resultado processado pelo servidor gRPC Node.js',
+    `Arquivo de requisicao: ${requestFileName}`,
+    `Acao solicitada: ${action || '(vazia)'}`,
+    `Ator: ${actor}`,
+    `Sucesso: ${result.success ? 'sim' : 'nao'}`,
+    `Mensagem: ${result.message}`,
+    '',
+    'Estado da batalha:',
+    `Jogador: ${state.player.name}`,
+    `HP jogador: ${state.player.hp}/${state.player.max_hp}`,
+    `Jogador vivo: ${state.player.alive ? 'sim' : 'nao'}`,
+    '',
+    `Inimigo: ${state.monster.name}`,
+    `HP inimigo: ${state.monster.hp}/${state.monster.max_hp}`,
+    `Inimigo vivo: ${state.monster.alive ? 'sim' : 'nao'}`,
+    '',
+    `Turno: ${state.turn}`,
+    `Pocoes restantes: ${state.potions_left}`,
+    `Resultado da batalha: ${state.outcome}`,
+    '',
+    'Log recente:',
+    ...state.log.map((item) => `- ${item}`),
+    '',
+  ];
+
+  return lines.join('\n');
 }
 
 function listStoredFiles() {
